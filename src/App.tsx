@@ -3,18 +3,54 @@ import { formatUnits } from "viem";
 import WalletBar from "./components/WalletBar";
 import { useAxoraStats } from "./hooks/useAxoraStats";
 import { useCpuMiner } from "./mining/useCpuMiner";
+import { useGpuMiner } from "./mining/useGpuMiner";
 import { useMint } from "./mining/useMint";
+import { checkGpuSupport } from "./mining/gpuSupport";
+
+type MiningMode = "CPU" | "GPU";
 
 export default function App() {
   const stats = useAxoraStats();
-  const miner = useCpuMiner();
+  const cpu = useCpuMiner();
+  const gpu = useGpuMiner();
   const minting = useMint();
 
+  const [mode, setMode] = useState<MiningMode>("CPU");
+  const [gpuAvailable, setGpuAvailable] = useState(false);
+  const [gpuMessage, setGpuMessage] = useState(
+    "Checking WebGPU support...",
+  );
   const [deadline, setDeadline] = useState<number | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
+  const miner = mode === "CPU" ? cpu : gpu;
   const soldOut =
     stats.totalMinted !== undefined && stats.totalMinted >= 900n;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void checkGpuSupport().then((support) => {
+      if (cancelled) return;
+      setGpuAvailable(support.supported);
+      setGpuMessage(
+        support.supported
+          ? "WebGPU is available."
+          : support.reason ?? "This browser or device does not support WebGPU.",
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (soldOut) {
+      cpu.stop();
+      gpu.stop();
+    }
+  }, [soldOut, cpu.stop, gpu.stop]);
 
   useEffect(() => {
     if (!miner.result) return;
@@ -41,13 +77,7 @@ export default function App() {
   }, [deadline]);
 
   useEffect(() => {
-    if (soldOut) miner.stop();
-  }, [soldOut, miner]);
-
-  useEffect(() => {
-    if (minting.isConfirmed) {
-      void stats.refresh();
-    }
+    if (minting.isConfirmed) void stats.refresh();
   }, [minting.isConfirmed]);
 
   const epoch = stats.currentEpoch?.toString().padStart(2, "0") ?? "—";
@@ -62,14 +92,26 @@ export default function App() {
       ? stats.remainingSupply.toString()
       : "—";
 
-  const activeResult = miner.result && secondsLeft > 0;
+  const activeResult = Boolean(miner.result && secondsLeft > 0);
   const expired = Boolean(miner.result && secondsLeft === 0);
 
   function startMining() {
     setDeadline(null);
     setSecondsLeft(0);
     minting.reset();
-    miner.start();
+
+    if (mode === "CPU") {
+      gpu.stop();
+      cpu.start();
+    } else {
+      cpu.stop();
+      void gpu.start();
+    }
+  }
+
+  function stopMining() {
+    cpu.stop();
+    gpu.stop();
   }
 
   async function mintNft() {
@@ -151,23 +193,42 @@ export default function App() {
             <div>
               <span className="label">MINING MODE</span>
               <div className="mode-buttons">
-                <button className="mode-button mode-selected" type="button">
+                <button
+                  className={`mode-button ${mode === "CPU" ? "mode-selected" : ""}`}
+                  type="button"
+                  disabled={cpu.isMining || gpu.isMining || activeResult}
+                  onClick={() => setMode("CPU")}
+                >
                   CPU
                 </button>
                 <button
-                  className="mode-button"
+                  className={`mode-button ${mode === "GPU" ? "mode-selected" : ""}`}
                   type="button"
-                  disabled
-                  title="GPU mining engine is not available yet."
+                  disabled={
+                    !gpuAvailable ||
+                    cpu.isMining ||
+                    gpu.isMining ||
+                    activeResult
+                  }
+                  title={gpuMessage}
+                  onClick={() => setMode("GPU")}
                 >
-                  GPU — UNAVAILABLE
+                  {gpuAvailable ? "GPU" : "GPU MINING UNAVAILABLE"}
                 </button>
               </div>
             </div>
             <span className="worker-note">
-              Multi-worker SHA-256 · Browser-based
+              {mode === "CPU"
+                ? "Multi-worker SHA-256 · Browser-based"
+                : "WebGPU SHA-256 · Parallel compute"}
             </span>
           </div>
+
+          {!gpuAvailable && (
+            <p className="gpu-notice" role="status">
+              GPU MINING UNAVAILABLE — {gpuMessage}
+            </p>
+          )}
 
           <div className="mining-metrics">
             <div className="metric">
@@ -188,11 +249,17 @@ export default function App() {
             <div className="terminal-line">
               <span className="terminal-prompt">&gt;</span>
               {!miner.isMining && !activeResult && !expired && (
-                <span>Miner ready. Start CPU mining to search for a hash.</span>
+                <span>Miner ready. Start {mode} mining to search for a hash.</span>
               )}
-              {miner.isMining && <span>Searching for a matching SHA-256 hash...</span>}
-              {activeResult && <span>Local hash found. Mint window is open.</span>}
-              {expired && <span>Mint window expired. Start mining again.</span>}
+              {miner.isMining && (
+                <span>Searching for a matching SHA-256 hash...</span>
+              )}
+              {activeResult && (
+                <span>Local hash found. Mint window is open.</span>
+              )}
+              {expired && (
+                <span>Mint window expired. Start mining again.</span>
+              )}
             </div>
             {miner.result && (
               <>
@@ -207,6 +274,8 @@ export default function App() {
               </>
             )}
           </div>
+
+          {miner.error && <p className="error-banner">{miner.error}</p>}
 
           {activeResult && miner.result && (
             <section className="block-card">
@@ -231,7 +300,9 @@ export default function App() {
                 disabled={minting.isMinting || soldOut}
                 onClick={() => void mintNft()}
               >
-                {minting.isMinting ? "WAITING FOR CONFIRMATION..." : "MINT NFT"}
+                {minting.isMinting
+                  ? "WAITING FOR CONFIRMATION..."
+                  : "MINT NFT"}
               </button>
             </section>
           )}
@@ -263,7 +334,7 @@ export default function App() {
               <button
                 className="button button-stop"
                 type="button"
-                onClick={miner.stop}
+                onClick={stopMining}
               >
                 STOP MINING
               </button>
@@ -271,7 +342,12 @@ export default function App() {
               <button
                 className="button button-primary"
                 type="button"
-                disabled={soldOut || stats.isLoading || stats.totalMinted === undefined}
+                disabled={
+                  soldOut ||
+                  stats.isLoading ||
+                  stats.totalMinted === undefined ||
+                  (mode === "GPU" && !gpuAvailable)
+                }
                 onClick={startMining}
               >
                 START MINING
