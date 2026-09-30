@@ -33,6 +33,7 @@ export function useCpuMiner() {
   const [hashes, setHashes] = useState(0);
   const [hashrate, setHashrate] = useState(0);
   const [result, setResult] = useState<MiningResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const stop = useCallback(() => {
     for (const worker of workersRef.current) {
@@ -49,6 +50,7 @@ export function useCpuMiner() {
     stop();
     setHashes(0);
     setResult(null);
+    setError(null);
 
     const challenge = crypto.randomUUID();
     const availableCores = navigator.hardwareConcurrency || 2;
@@ -100,10 +102,16 @@ export function useCpuMiner() {
       };
 
       worker.onerror = () => {
+        setError("A CPU mining worker stopped unexpectedly.");
         worker.terminate();
         workersRef.current = workersRef.current.filter(
           (item) => item !== worker,
         );
+
+        if (workersRef.current.length === 0) {
+          setIsMining(false);
+          setHashrate(0);
+        }
       };
 
       worker.postMessage({
@@ -128,5 +136,5 @@ export function useCpuMiner() {
     };
   }, []);
 
-  return { isMining, hashes, hashrate, result, start, stop };
+  return { isMining, hashes, hashrate, result, error, start, stop };
 }
