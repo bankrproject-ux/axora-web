@@ -1,9 +1,19 @@
+type WebGpuApi = {
+  requestAdapter: () => Promise<unknown | null>;
+};
+
+type NavigatorWithWebGpu = Navigator & {
+  gpu?: WebGpuApi;
+};
+
 export type GpuSupport =
   | { supported: true; reason: null }
   | { supported: false; reason: string };
 
 export async function checkGpuSupport(): Promise<GpuSupport> {
-  if (!("gpu" in navigator)) {
+  const gpuApi = (navigator as NavigatorWithWebGpu).gpu;
+
+  if (!gpuApi) {
     return {
       supported: false,
       reason: "This browser or device does not support WebGPU.",
@@ -11,7 +21,7 @@ export async function checkGpuSupport(): Promise<GpuSupport> {
   }
 
   try {
-    const adapter = await navigator.gpu.requestAdapter();
+    const adapter = await gpuApi.requestAdapter();
 
     if (!adapter) {
       return {
