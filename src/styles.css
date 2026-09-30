@@ -670,3 +670,14 @@ h2 {
     transition-duration: 0.01ms !important;
   }
 }
+
+.gpu-notice {
+  margin: 14px 0 0;
+  border-left: 2px solid #68716a;
+  padding: 9px 12px;
+  background: #0b0e0c;
+  color: #9aa39b;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.6;
+}
